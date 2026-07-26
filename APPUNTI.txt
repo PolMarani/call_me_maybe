@@ -1,0 +1,26 @@
+Struttura STATI
+
+START -> "{"
+NAME_KEY "name": "
+FUNCTION_NAME generated
+PARAMS_OPEN -> ", "parameters": {"
+PARAM_NAME generated
+VALUE_DEFINITION_STRING -> ": "
+ or
+VALUE_DEFINITION_INT -> ": 
+PARAM_VALUE_NUMBER / PARAM_VALUE_STRING generated
+MULTIPLE_PARAM -> , " (If there is multiple value)
+END -> }}
+
+[
+{
+"prompt": "What is the sum of 2 and 3?",
+"name": "fn_add_numbers",
+"parameters": {"a": 2.0, "b": 3.0}
+},
+{
+"prompt": "Reverse the string 'hello'",
+"name": "fn_reverse_string",
+"
+}
+]
