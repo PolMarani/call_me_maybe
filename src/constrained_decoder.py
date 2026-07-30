@@ -27,11 +27,15 @@ class ConstrainedDecoder(BaseModel):
         self.function_name_tokens = [
             self.model.encode(function["name"].tolist())
             for function in self.functions]
+        self.attributes_names = {
+            function["name"]:  
+            for function in self.functions
+        }
 
     def generate_function_call(self, prompt: str) -> dict:
         input_ids = self.model.encode(prompt).tolist()[0]
         compatible_function = self.function_name_tokens.copy()
-        generat_cont = 0
+        gen_cont = 0
         state = "START"
 
         while True:
@@ -49,11 +53,16 @@ class ConstrainedDecoder(BaseModel):
                 continue
             # state FUNCTION_NAME
             elif state == "FUNCTION_NAME":
-                if (generat_cont == len(compatible_function[0])):
+                if (gen_cont == len(compatible_function[0])):
                     valid_tokens = self.prefix_structure["FINISHED_FUNCTION"]
                 else:
-                    valid_tokens = [function[generat_cont]
+                    valid_tokens = [function[gen_cont]
                                     for function in compatible_function]
+            # state FUNCTION_NAME
+            elif state == "PARAMS_OPEN":
+                input_ids += self.prefix_structure["PARAMS_OPEN"]
+                state = "PARAM_NAME"
+                continue
 
             logits_array = np.array(logits)
             filtered_logits = np.full_like(logits_array, -np.inf)
@@ -61,8 +70,11 @@ class ConstrainedDecoder(BaseModel):
             next_token = np.argmax(filtered_logits)
             input_ids.append(int(next_token))
 
-            if (state == "FUNCTION_NAME" and next_token != finished_func_token):
-                compatible_function = [function for function
-                                       in compatible_function
-                                       if function[generat_cont] == next_token]
-                generat_cont += 1
+            if state == "FUNCTION_NAME":
+                if next_token == self.prefix_structure["FINISHED_FUNCTION"][0]:
+                    state = "PARAMS_OPEN"
+                else:
+                    compatible_function = [function for function
+                                           in compatible_function
+                                           if function[gen_cont] == next_token]
+                    gen_cont += 1
