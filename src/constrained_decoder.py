@@ -72,11 +72,27 @@ class ConstrainedDecoder(BaseModel):
                 input_ids += self.attributes_names_tokens[chosen_function][attr_cont]
                 attr_type = function["parameters"][attribute]["type"]
                 attr_cont += 1
-                if len()
-                    
+                if attr_type == "string":
+                    state = "VALUE_DEFINITION_STRING"
+                    continue
+                elif attr_type == "number":
+                    state = "VALUE_DEFINITION_INT"
+                    continue
+            elif state == "VALUE_DEFINITION_STRING":
+                input_ids += self.prefix_structure["VALUE_DEFINITION_STRING"]
+                state = "PARAM_VALUE_STRING"
+                continue
+            elif state == "VALUE_DEFINITION_INT":
+                input_ids += self.prefix_structure["VALUE_DEFINITION_INT"]
+                state = "PARAM_VALUE_NUMBER"
+                continue
+            elif state == "PARAM_VALUE_STRING":
+                valid_tokens = list(range(len(logits)))
+            elif state == "PARAM_VALUE_NUMBER":
+                
 
             #  if (len(self.attributes_names_tokens[chosen_function]) != attr_cont):
-            
+
             logits_array = np.array(logits)
             filtered_logits = np.full_like(logits_array, -np.inf)
             filtered_logits[valid_tokens] = logits_array[valid_tokens]
@@ -91,3 +107,5 @@ class ConstrainedDecoder(BaseModel):
                                            in compatible_function
                                            if function[gen_cont] == next_token]
                     gen_cont += 1
+            if state == "PARAM_VALUE_STRING":
+                

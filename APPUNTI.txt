@@ -8,7 +8,10 @@ PARAM_NAME generated
 VALUE_DEFINITION_STRING -> ": "
  or
 VALUE_DEFINITION_INT -> ": 
-PARAM_VALUE_NUMBER / PARAM_VALUE_STRING generated
+
+PARAM_VALUE_NUMBER generated
+    or
+PARAM_VALUE_STRING generated
 MULTIPLE_PARAM -> , " (If there is multiple value)
 END -> }}
 
