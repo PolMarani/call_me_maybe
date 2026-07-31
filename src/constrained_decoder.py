@@ -9,12 +9,9 @@ class ConstrainedDecoder(BaseModel):
     functions: list
     prefix_structure: dict = {}
     function_name_tokens: list = []
+    attributes_names_tokens: dict = {}
 
     def model_post_init(self, __context: any) -> None:
-        """
-         prefix_structure e' con [0] perche' con encode ti crea un tensor che e' una lista tensor, e con tolist
-         te la mette dentro un'altra lista
-        """
         self.prefix_structure = {
             "START": self.model.encode('{').tolist()[0],
             "NAME_KEY": self.model.encode('"name": "').tolist()[0],
@@ -27,8 +24,11 @@ class ConstrainedDecoder(BaseModel):
         self.function_name_tokens = [
             self.model.encode(function["name"].tolist())
             for function in self.functions]
-        self.attributes_names = {
-            function["name"]:  
+        # Crea dict di liste, che sarebbero gli attributi per ogni funzione
+        self.attributes_names_tokens = {
+            function["name"]:
+            [self.model.encode(param_name).tolist()[0]
+             for param_name in function["parameters"].keys()]
             for function in self.functions
         }
 
@@ -36,7 +36,9 @@ class ConstrainedDecoder(BaseModel):
         input_ids = self.model.encode(prompt).tolist()[0]
         compatible_function = self.function_name_tokens.copy()
         gen_cont = 0
+        attr_cont = 0
         state = "START"
+        chosen_function = None
 
         while True:
             logits = self.model.get_logits_from_input_ids(input_ids)
@@ -55,6 +57,7 @@ class ConstrainedDecoder(BaseModel):
             elif state == "FUNCTION_NAME":
                 if (gen_cont == len(compatible_function[0])):
                     valid_tokens = self.prefix_structure["FINISHED_FUNCTION"]
+                    chosen_function = self.model.decode(compatible_function[0])
                 else:
                     valid_tokens = [function[gen_cont]
                                     for function in compatible_function]
@@ -63,7 +66,17 @@ class ConstrainedDecoder(BaseModel):
                 input_ids += self.prefix_structure["PARAMS_OPEN"]
                 state = "PARAM_NAME"
                 continue
+            elif state == "PARAM_NAME":
+                function = next(f for f in self.functions if f["name"] == chosen_function)
+                attribute = list(function["parameters"].keys())[attr_cont]
+                input_ids += self.attributes_names_tokens[chosen_function][attr_cont]
+                attr_type = function["parameters"][attribute]["type"]
+                attr_cont += 1
+                if len()
+                    
 
+            #  if (len(self.attributes_names_tokens[chosen_function]) != attr_cont):
+            
             logits_array = np.array(logits)
             filtered_logits = np.full_like(logits_array, -np.inf)
             filtered_logits[valid_tokens] = logits_array[valid_tokens]
