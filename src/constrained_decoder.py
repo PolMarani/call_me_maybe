@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 from llm_sdk import Small_LLM_Model
 import numpy as np
-
+import json
 
 class ConstrainedDecoder(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -10,6 +10,10 @@ class ConstrainedDecoder(BaseModel):
     prefix_structure: dict = {}
     function_name_tokens: list = []
     attributes_names_tokens: dict = {}
+    number_tokens: list = []
+    comma_token: 0
+    close_brace_token: 0
+
 
     def model_post_init(self, __context: any) -> None:
         self.prefix_structure = {
@@ -18,7 +22,7 @@ class ConstrainedDecoder(BaseModel):
             "FINISHED_FUNCTION": self.model.encode('"').tolist()[0],
             "PARAMS_OPEN": self.model.encode('parameters": {').tolist()[0],
             "VALUE_DEFINITION_STRING": self.model.encode('": "').tolist()[0],
-            "VALUE_DEFINITION_INT": self.model.encode('":').tolist()[0],
+            "VALUE_DEFINITION_NUMBER": self.model.encode('":').tolist()[0],
             "MULTIPLE_PARAM": self.model.encode(', "').tolist()[0],
             "END": self.model.encode("}}").tolist()[0]}
         self.function_name_tokens = [
@@ -31,6 +35,19 @@ class ConstrainedDecoder(BaseModel):
              for param_name in function["parameters"].keys()]
             for function in self.functions
         }
+        with open(self.model.get_path_to_vocab_file(), 'r') as f:
+            vocab = json.load(f)
+        self.number_tokens = [
+            token_id for token_str, token_id in vocab.items()
+            if all(c in "0123456789.-eE" for c in token_str)
+        ]
+        self.comma_token = self.model.encode(',').tolist()[0]
+        self.close_brace_token = self.model.encode('}').tolist()[0]
+
+        self.number_tokens.extend(
+            self.comma_token)
+        self.number_tokens.extend(
+            self.close_brace_token)
 
     def generate_function_call(self, prompt: str) -> dict:
         input_ids = self.model.encode(prompt).tolist()[0]
@@ -61,37 +78,41 @@ class ConstrainedDecoder(BaseModel):
                 else:
                     valid_tokens = [function[gen_cont]
                                     for function in compatible_function]
-            # state FUNCTION_NAME
+            # state PARAMS_OPEN
             elif state == "PARAMS_OPEN":
                 input_ids += self.prefix_structure["PARAMS_OPEN"]
                 state = "PARAM_NAME"
                 continue
             elif state == "PARAM_NAME":
-                function = next(f for f in self.functions if f["name"] == chosen_function)
+                function = next(f for f in self.functions
+                                if f["name"] == chosen_function)
                 attribute = list(function["parameters"].keys())[attr_cont]
-                input_ids += self.attributes_names_tokens[chosen_function][attr_cont]
+                input_ids += (
+                    self.attributes_names_tokens[chosen_function][attr_cont])
                 attr_type = function["parameters"][attribute]["type"]
                 attr_cont += 1
                 if attr_type == "string":
                     state = "VALUE_DEFINITION_STRING"
                     continue
                 elif attr_type == "number":
-                    state = "VALUE_DEFINITION_INT"
+                    state = "VALUE_DEFINITION_NUMBER"
                     continue
             elif state == "VALUE_DEFINITION_STRING":
                 input_ids += self.prefix_structure["VALUE_DEFINITION_STRING"]
                 state = "PARAM_VALUE_STRING"
                 continue
-            elif state == "VALUE_DEFINITION_INT":
-                input_ids += self.prefix_structure["VALUE_DEFINITION_INT"]
+            elif state == "VALUE_DEFINITION_NUMBER":
+                input_ids += self.prefix_structure["VALUE_DEFINITION_NUMBER"]
                 state = "PARAM_VALUE_NUMBER"
                 continue
             elif state == "PARAM_VALUE_STRING":
                 valid_tokens = list(range(len(logits)))
             elif state == "PARAM_VALUE_NUMBER":
-                
-
-            #  if (len(self.attributes_names_tokens[chosen_function]) != attr_cont):
+                valid_tokens = self.number_tokens
+            elif state == "MULTIPLE_PARAM":
+                input_ids += self.prefix_structure["MULTIPLE_PARAM"]
+                state = "PARAM_NAME"
+                continue
 
             logits_array = np.array(logits)
             filtered_logits = np.full_like(logits_array, -np.inf)
@@ -107,5 +128,17 @@ class ConstrainedDecoder(BaseModel):
                                            in compatible_function
                                            if function[gen_cont] == next_token]
                     gen_cont += 1
-            if state == "PARAM_VALUE_STRING":
-                
+            elif state == "PARAM_VALUE_STRING":
+                if self.model.decode([next_token]).endswith('"'):
+                    function = next(f for f in self.functions
+                                    if f["name"] == chosen_function)
+                    tot_attr = len(function["parameters"])
+                if attr_cont != tot_attr:
+                    state = self.prefix_structure["MULTIPLE_PARAM"]
+                else:
+                    state = self.prefix_structure["END"]
+            elif state == "PARAM_VALUE_NUMBER":
+                if next_token in [self.comma_token]:
+                    state = "MULTIPLE_PARAM"
+                elif next_token in [self.close_brace_token]:
+                    state = "END"
