@@ -12,6 +12,7 @@ class ConstrainedDecoder(BaseModel):
     function_name_tokens: list = []
     attributes_names_tokens: dict = {}
     number_tokens: list = []
+    string_tokens: list = []
     comma_token: int = 0
     close_brace_token: int = 0
 
@@ -25,7 +26,9 @@ class ConstrainedDecoder(BaseModel):
             "VALUE_DEFINITION_NUMBER": self.model.encode('": ').tolist()[0],
             "MULTIPLE_PARAM_STRING": self.model.encode(', "').tolist()[0],
             "MULTIPLE_PARAM_NUMBER": self.model.encode(' "').tolist()[0],
-            "END": self.model.encode('}}').tolist()[0]}
+            "END_STRING": self.model.encode('}}').tolist()[0],
+            "END_NUMBER": self.model.encode('}').tolist()[0]}
+
         self.function_name_tokens = [
             self.model.encode(function["name"]).tolist()[0]
             for function in self.functions]
@@ -42,6 +45,10 @@ class ConstrainedDecoder(BaseModel):
             token_id for token_str, token_id in vocab.items()
             if all(c in "0123456789.-eE" for c in token_str)
         ]
+        self.string_tokens = [
+            token_id for token_str, token_id in vocab.items()
+            if '"' not in token_str
+        ]
         self.comma_token = self.model.encode(',').tolist()[0][0]
         self.close_brace_token = self.model.encode('}').tolist()[0][0]
 
@@ -49,10 +56,23 @@ class ConstrainedDecoder(BaseModel):
             [self.comma_token])
         self.number_tokens.extend(
             [self.close_brace_token])
-        print("self.close_brace_token e self.comma_token:", self.close_brace_token, self.comma_token)
+        self.string_tokens.extend(
+                    self.prefix_structure["FINISHED_FUNCTION"])
 
     def generate_function_call(self, prompt: str) -> dict:
-        input_ids = self.model.encode(prompt).tolist()[0]
+        instructions = f"""
+        You are a function calling assistant. Given a user request and a list
+        of available functions, output a JSON object with the name of
+        the function to call and its arguments.
+
+        Available functions:
+        {json.dumps(self.functions)}
+
+        User request: {prompt}
+
+        Output:
+        """
+        input_ids = self.model.encode(instructions).tolist()[0]
         compatible_function = self.function_name_tokens.copy()
         gen_cont = 0
         attr_cont = 0
@@ -61,6 +81,7 @@ class ConstrainedDecoder(BaseModel):
         prompt_len = len(input_ids)
         result = {}
         attr_type = ""
+        value_cont = 0
 
         while True:
             logits = self.model.get_logits_from_input_ids(input_ids)
@@ -114,19 +135,27 @@ class ConstrainedDecoder(BaseModel):
                 state = "PARAM_VALUE_NUMBER"
                 continue
             elif state == "PARAM_VALUE_STRING":
-                valid_tokens = list(range(len(logits)))
+                if (value_cont >= 30):
+                    valid_tokens = self.model.encode('"').tolist()[0]
+                else:
+                    valid_tokens = self.string_tokens
             elif state == "PARAM_VALUE_NUMBER":
                 function = next(f for f in self.functions
                                 if f["name"] == chosen_function)
                 tot_attr = len(function["parameters"])
-                if attr_cont == tot_attr:
-                    number_tokens_nocomma = [
-                                t for t in self.number_tokens
-                                if t != self.comma_token
-                            ]
-                    valid_tokens = number_tokens_nocomma
+                if (value_cont >= 10) and attr_cont == tot_attr:
+                    valid_tokens = [self.close_brace_token]
+                elif (value_cont >= 10) and attr_cont != tot_attr:
+                    valid_tokens = [self.comma_token]
                 else:
-                    valid_tokens = self.number_tokens
+                    if attr_cont == tot_attr:
+                        number_tokens_nocomma = [
+                                    t for t in self.number_tokens
+                                    if t != self.comma_token
+                                ]
+                        valid_tokens = number_tokens_nocomma
+                    else:
+                        valid_tokens = self.number_tokens
             elif state == "MULTIPLE_PARAM":
                 if attr_type == "string":
                     input_ids += self.prefix_structure["MULTIPLE_PARAM_STRING"]
@@ -134,13 +163,15 @@ class ConstrainedDecoder(BaseModel):
                     input_ids += self.prefix_structure["MULTIPLE_PARAM_NUMBER"]
                 state = "PARAM_NAME"
                 continue
-            elif state == "END":
-                input_ids += self.prefix_structure["END"]
+            elif state in ("END_STRING", "END_NUMBER"):
+                input_ids += self.prefix_structure[state]
                 final_json = input_ids[prompt_len:]
+                print(repr(self.model.decode(final_json)))
                 final_json = json.loads(self.model.decode(final_json))
                 result["prompt"] = prompt
                 result.update(final_json)
                 print("RESULT IS:", result)
+                print("--------------------------------------------------------")
                 return result
 
             logits_array = np.array(logits)
@@ -159,16 +190,20 @@ class ConstrainedDecoder(BaseModel):
                                            if function[gen_cont] == next_token]
                     gen_cont += 1
             elif state == "PARAM_VALUE_STRING":
+                value_cont += 1
                 if self.model.decode([next_token]).endswith('"'):
                     function = next(f for f in self.functions
                                     if f["name"] == chosen_function)
                     tot_attr = len(function["parameters"])
                     if attr_cont != tot_attr:
                         state = "MULTIPLE_PARAM"
+                        value_cont = 0
                     else:
-                        state = "END"
+                        state = "END_STRING"
             elif state == "PARAM_VALUE_NUMBER":
+                value_cont += 1
                 if next_token in [self.comma_token]:
                     state = "MULTIPLE_PARAM"
+                    value_cont = 0
                 elif next_token in [self.close_brace_token]:
-                    state = "END"
+                    state = "END_NUMBER"
