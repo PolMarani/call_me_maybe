@@ -13,13 +13,13 @@ def main() -> None:
     constrained_decoder = ConstrainedDecoder(model=model,
                                              functions=function_definition)
 
-    prompt_results = []
+    prompt_elab_results = []
     for prompt in test_prompts:
         prompt_text = prompt.get("prompt")
-        prompt_results.append(
+        prompt_elab_results.append(
             constrained_decoder.generate_function_call(prompt_text))
 
-    write_json(prompt_results, args.output)
+    write_json(prompt_elab_results, args.output)
 
 
 def parse_arguments() -> argparse.Namespace:

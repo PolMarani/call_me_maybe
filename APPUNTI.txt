@@ -13,6 +13,9 @@ PARAM_VALUE_NUMBER generated
     or
 PARAM_VALUE_STRING generated
 MULTIPLE_PARAM -> , " (If there is multiple value)
+
+MULTIPLE_PARAM_STRING": (', "')
+"MULTIPLE_PARAM_NUMBER": (' "')
 END -> }}
 
 [
