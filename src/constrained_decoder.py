@@ -82,7 +82,9 @@ class ConstrainedDecoder(BaseModel):
         result = {}
         attr_type = ""
         value_cont = 0
+        value_rep = [2, 3, 4, 5, 6, 7]
 
+        print(" - The prompt is:", prompt)
         while True:
             logits = self.model.get_logits_from_input_ids(input_ids)
 
@@ -170,7 +172,9 @@ class ConstrainedDecoder(BaseModel):
                 final_json = json.loads(self.model.decode(final_json))
                 result["prompt"] = prompt
                 result.update(final_json)
+                print(" ->")
                 print("RESULT IS:", result)
+                print()
                 print("--------------------------------------------------------")
                 return result
 
@@ -191,15 +195,29 @@ class ConstrainedDecoder(BaseModel):
                     gen_cont += 1
             elif state == "PARAM_VALUE_STRING":
                 value_cont += 1
-                if self.model.decode([next_token]).endswith('"'):
-                    function = next(f for f in self.functions
-                                    if f["name"] == chosen_function)
-                    tot_attr = len(function["parameters"])
-                    if attr_cont != tot_attr:
-                        state = "MULTIPLE_PARAM"
-                        value_cont = 0
-                    else:
-                        state = "END_STRING"
+                for k in value_rep:
+                    if input_ids[-k:] == input_ids[-2*k:-k]:
+                        input_ids = input_ids[:-k]
+                        input_ids += self.prefix_structure["FINISHED_FUNCTION"]
+                        function = next(f for f in self.functions
+                                        if f["name"] == chosen_function)
+                        tot_attr = len(function["parameters"])
+                        if attr_cont != tot_attr:
+                            state = "MULTIPLE_PARAM"
+                            value_cont = 0
+                        else:
+                            state = "END_STRING"
+                        break
+                else:
+                    if self.model.decode([next_token]).endswith('"'):
+                        function = next(f for f in self.functions
+                                        if f["name"] == chosen_function)
+                        tot_attr = len(function["parameters"])
+                        if attr_cont != tot_attr:
+                            state = "MULTIPLE_PARAM"
+                            value_cont = 0
+                        else:
+                            state = "END_STRING"
             elif state == "PARAM_VALUE_NUMBER":
                 value_cont += 1
                 if next_token in [self.comma_token]:
