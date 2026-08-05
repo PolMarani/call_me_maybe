@@ -1,12 +1,12 @@
+from typing import cast
 import json
 
 
 def load_json(path_file: str) -> list:
-
     try:
         with open(path_file, 'r') as f:
             json_opened = json.load(f)
-        return json_opened
+        return cast(list, json_opened)
     except (FileNotFoundError, json.JSONDecodeError):
         return []
 

@@ -1,6 +1,8 @@
 from pydantic import BaseModel, ConfigDict
 from llm_sdk import Small_LLM_Model
+from typing import Any
 import numpy as np
+import textwrap
 import json
 
 
@@ -16,7 +18,7 @@ class ConstrainedDecoder(BaseModel):
     comma_token: int = 0
     close_brace_token: int = 0
 
-    def model_post_init(self, __context: any) -> None:
+    def model_post_init(self, __context: Any) -> None:
         self.prefix_structure = {
             "START": self.model.encode('{').tolist()[0],
             "NAME_KEY": self.model.encode('"name": "').tolist()[0],
@@ -64,7 +66,7 @@ class ConstrainedDecoder(BaseModel):
         You are a function calling assistant. Given a user request and a list
         of available functions, output a JSON object with the name of
         the function to call and its arguments.
-    
+
         Available functions:
         {json.dumps(self.functions)}
 
@@ -72,6 +74,7 @@ class ConstrainedDecoder(BaseModel):
 
         Output:
         """
+        instructions = textwrap.dedent(instructions)
         input_ids = self.model.encode(instructions).tolist()[0]
         compatible_function = self.function_name_tokens.copy()
         gen_cont = 0
@@ -119,7 +122,8 @@ class ConstrainedDecoder(BaseModel):
                 print(f"function found: {function}")
                 print(f"parameters: {function['parameters']}")
                 attribute = list(function["parameters"].keys())[attr_cont]
-                print(f"PARAM_NAME: attr_cont={attr_cont}, chosen={chosen_function}")
+                print(f"PARAM_NAME: attr_cont={attr_cont}, "
+                      f"chosen={chosen_function}")
                 input_ids += (
                     self.attributes_names_tokens[chosen_function][attr_cont])
                 attr_type = function["parameters"][attribute]["type"]
@@ -179,7 +183,8 @@ class ConstrainedDecoder(BaseModel):
                 print(" ->")
                 print("RESULT IS:", result)
                 print()
-                print("--------------------------------------------------------")
+                print("--------------------------------------------",
+                      "------------")
                 return result
 
             logits_array = np.array(logits)
@@ -187,7 +192,8 @@ class ConstrainedDecoder(BaseModel):
             filtered_logits[valid_tokens] = logits_array[valid_tokens]
             next_token = np.argmax(filtered_logits)
             input_ids.append(int(next_token))
-            print(f"state={state}, next_token={next_token}, decoded={self.model.decode([next_token])}")
+            print(f"state={state}, next_token={next_token}, "
+                  f"decoded={self.model.decode([next_token])}")
 
             if state == "FUNCTION_NAME":
                 if next_token == self.prefix_structure["FINISHED_FUNCTION"][0]:

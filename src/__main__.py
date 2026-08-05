@@ -9,7 +9,7 @@ def main() -> None:
     function_definition = load_json(args.functions_definition)
     test_prompts = load_json(args.input)
 
-    model = Small_LLM_Model()
+    model = Small_LLM_Model(model_name=args.model)
     constrained_decoder = ConstrainedDecoder(model=model,
                                              functions=function_definition)
 
@@ -40,6 +40,11 @@ def parse_arguments() -> argparse.Namespace:
         '--output', type=str,
         default="data/output/function_calling_result.json",
         help="Path to output JSON file"
+    )
+    parser.add_argument(
+        '--model', type=str,
+        default="Qwen/Qwen3-0.6B",
+        help="Choose the model to use"
     )
     args = parser.parse_args()
     return args
