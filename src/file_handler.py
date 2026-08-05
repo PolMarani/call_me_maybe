@@ -14,6 +14,6 @@ def load_json(path_file: str) -> list:
 def write_json(output_data: list[dict], output_filepath: str) -> None:
     try:
         with open(output_filepath, 'w') as f:
-            json.dump(output_data, f)
+            json.dump(output_data, f, indent=2)
     except (FileNotFoundError, PermissionError, TypeError) as e:
         print("ERRROOOOOOORRRRR:", e)

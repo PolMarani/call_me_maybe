@@ -64,7 +64,7 @@ class ConstrainedDecoder(BaseModel):
         You are a function calling assistant. Given a user request and a list
         of available functions, output a JSON object with the name of
         the function to call and its arguments.
-
+    
         Available functions:
         {json.dumps(self.functions)}
 
@@ -85,8 +85,8 @@ class ConstrainedDecoder(BaseModel):
         value_rep = [2, 3, 4, 5, 6, 7]
 
         print(" - The prompt is:", prompt)
+        print()
         while True:
-            logits = self.model.get_logits_from_input_ids(input_ids)
 
             # state START
             if state == "START":
@@ -100,6 +100,7 @@ class ConstrainedDecoder(BaseModel):
                 continue
             # state FUNCTION_NAME
             elif state == "FUNCTION_NAME":
+                logits = self.model.get_logits_from_input_ids(input_ids)
                 if (gen_cont == len(compatible_function[0])):
                     valid_tokens = self.prefix_structure["FINISHED_FUNCTION"]
                     chosen_function = self.model.decode(compatible_function[0])
@@ -112,6 +113,7 @@ class ConstrainedDecoder(BaseModel):
                 state = "PARAM_NAME"
                 continue
             elif state == "PARAM_NAME":
+                logits = self.model.get_logits_from_input_ids(input_ids)
                 function = next(f for f in self.functions
                                 if f["name"] == chosen_function)
                 print(f"function found: {function}")
@@ -137,11 +139,13 @@ class ConstrainedDecoder(BaseModel):
                 state = "PARAM_VALUE_NUMBER"
                 continue
             elif state == "PARAM_VALUE_STRING":
+                logits = self.model.get_logits_from_input_ids(input_ids)
                 if (value_cont >= 30):
                     valid_tokens = self.model.encode('"').tolist()[0]
                 else:
                     valid_tokens = self.string_tokens
             elif state == "PARAM_VALUE_NUMBER":
+                logits = self.model.get_logits_from_input_ids(input_ids)
                 function = next(f for f in self.functions
                                 if f["name"] == chosen_function)
                 tot_attr = len(function["parameters"])
