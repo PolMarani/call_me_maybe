@@ -4,6 +4,7 @@ from typing import Any
 import numpy as np
 import textwrap
 import json
+import re
 
 
 class ConstrainedDecoder(BaseModel):
@@ -61,6 +62,16 @@ class ConstrainedDecoder(BaseModel):
         self.string_tokens.extend(
                     self.prefix_structure["FINISHED_FUNCTION"])
 
+    def fix_regex_pattern(self, par_value: str) -> str:
+        stripped = par_value.rstrip()
+        if stripped.endswith('|'):
+            stripped = stripped.rstrip('|')
+        if stripped.endswith('.*'):
+            m = re.fullmatch(r'([A-Za-z0-9_]+)\.\*', stripped)
+            if m:
+                stripped = m.group(1)
+        return stripped
+
     def generate_function_call(self, prompt: str) -> dict:
         instructions = f"""
         You are a function calling assistant. Given a user request and a list
@@ -85,7 +96,7 @@ class ConstrainedDecoder(BaseModel):
         result = {}
         attr_type = ""
         value_cont = 0
-        value_rep = [2, 3, 4, 5, 6, 7]
+        value_rep = [2, 3, 4, 5, 6, 7, 11]
 
         print(" - The prompt is:", prompt)
         print()
@@ -119,8 +130,8 @@ class ConstrainedDecoder(BaseModel):
                 logits = self.model.get_logits_from_input_ids(input_ids)
                 function = next(f for f in self.functions
                                 if f["name"] == chosen_function)
-                print(f"function found: {function}")
-                print(f"parameters: {function['parameters']}")
+                print(f"function found: \n {function}")
+                print(f"parameters: \n {function['parameters']}")
                 attribute = list(function["parameters"].keys())[attr_cont]
                 print(f"PARAM_NAME: attr_cont={attr_cont}, "
                       f"chosen={chosen_function}")
@@ -180,6 +191,9 @@ class ConstrainedDecoder(BaseModel):
                 final_json = json.loads(self.model.decode(final_json))
                 result["prompt"] = prompt
                 result.update(final_json)
+                if "regex" in result["parameters"]:
+                    result["parameters"]["regex"] = (
+                        self.fix_regex_pattern(result["parameters"]["regex"]))
                 print(" ->")
                 print("RESULT IS:", result)
                 print()
