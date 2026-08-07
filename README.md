@@ -23,6 +23,7 @@
 - [📊 Performance Analysis](#performance-analysis)
 - [🐛 Challenges Faced](#challenges-faced)
 - [✅ Testing Strategy](#testing-strategy)
+- [🎁 Bonus Features](#bonus-features)
 - [💡 Example Usage](#example-usage)
 
 ## 📖 Description
@@ -106,16 +107,17 @@ make run MODEL=Qwen/Qwen2.5-0.5B
 
 ### 🤖 How AI Was Used
 
-Claude (Anthropic) was used throughout this project as a Socratic tutoring "navigator": it asked guiding questions and gave minimal hints when I was stuck, but wrote no implementation code — every line of `src/constrained_decoder.py`, `src/file_handler.py`, `src/__main__.py`, the `Makefile`, and the lint configuration was written by me. Claude's role was to help me:
+Claude (Anthropic) was used throughout this project as a Socratic tutoring "navigator": for the core implementation it asked guiding questions and gave minimal hints when stuck, but wrote no code — every line of the finite state machine, the token pre-computation, the error handling, and the `Makefile`/lint configuration in `src/constrained_decoder.py`, `src/file_handler.py`, and `src/__main__.py` was written by me. Claude's role there was to help me:
 
 - Understand *why* constrained decoding is needed before writing *how* to implement it
 - Design the finite state machine (states, transitions, which parts of the JSON are fixed vs. model-generated)
 - Debug logic errors (e.g. tensor shapes from `encode()`, Pydantic attribute declarations, off-by-one errors in prefix matching)
 - Diagnose and fix a performance bug (the model was being queried for logits even in fixed states that never used them)
 - Diagnose and fix a correctness bug (greedy decoding causing the model to loop on repeated regex-like patterns)
+- Design (through testing against the actual failing outputs) the two targeted `fix_regex_pattern` corrections, which I then implemented myself
 - Configure `flake8`/`mypy` to exclude the third-party `llm_sdk` package without hiding it from type resolution
 
-This README itself was written directly by Claude, since the project's tutoring agreement explicitly excluded the README from the "navigator only, no code" rule.
+By explicit prior agreement, three parts of the project were excluded from that "navigator only" rule and were written directly by Claude: this **README**, the **NumPy-style docstrings** on the classes and functions, and the **colored terminal visualization** of the generation process (the ANSI color scheme and print formatting in `generate_function_call`).
 
 ## 🧠 Algorithm Explanation
 
@@ -145,6 +147,15 @@ Which tokens count as "valid" for numbers and strings is computed once, in `mode
 
 Function selection works through **prefix matching**: at `model_post_init` time, every function name in `functions_definition.json` is pre-tokenized. During `FUNCTION_NAME` generation, the set of "still-compatible" functions shrinks token by token as the model's choices narrow down which function it is spelling out, until only one remains and the model is forced to close the name with `"`.
 
+### Post-generation correction
+
+After the JSON is fully generated and parsed into a Python `dict`, if the result contains a `regex` parameter, `ConstrainedDecoder.fix_regex_pattern` applies two narrow, evidence-tested corrections directly on the Python string (no re-tokenization, no effect on generation speed):
+
+1. A dangling trailing `|` (empty alternation) is stripped — in Python's `re` module this matches at every position and silently breaks any substitution built on it.
+2. A trailing `.*` appended directly to a single plain word (e.g. `cat.*`) is stripped down to the word alone — the unclipped pattern greedily matches everything after the word instead of just the word itself.
+
+Both corrections were verified against the actual failure cases produced by the model before being adopted (see Challenges Faced).
+
 ## 🏗️ Design Decisions
 
 - **Pydantic for all state**: `ConstrainedDecoder` is a Pydantic `BaseModel`; all token pre-computation (fixed JSON fragments, function name token sequences, per-function parameter name tokens, the number/string token sets) happens once in `model_post_init`, not on every call to `generate_function_call`. This keeps per-prompt generation fast.
@@ -152,19 +163,22 @@ Function selection works through **prefix matching**: at `model_post_init` time,
 - **Greedy decoding (`argmax`)** was chosen over sampling, to keep generation deterministic and reproducible — important both for testing and for the constrained-decoding guarantee itself.
 - **Repetition guard**: greedy decoding on a small model tends to get stuck repeating a just-generated block (e.g. a regex group) indefinitely. Rather than a single fixed-length repetition check, the code checks multiple window sizes (`K` in `[2..7]`) after each token in `PARAM_VALUE_STRING`, comparing the last `K` tokens against the `K` before them; on a match, the duplicated tokens are dropped and the string is force-closed. This was chosen over prompt-engineering fixes (which were tried first and made both output quality and speed worse — see Challenges below) because it acts directly on the failure mode without inflating the prompt.
 - **Hard length caps** (`value_cont >= 30` for strings, `>= 10` for numbers) act as a safety net beneath the repetition guard, so that even a repetition the guard doesn't catch (mismatched period) cannot run away and blow the 5-minute time budget.
+- **Post-generation correction over prompt engineering**: after prompt-engineering attempts to improve `regex` argument quality backfired (see Challenges Faced), the fix was moved to a much simpler, lower-risk layer — plain Python string corrections applied to the already-generated `regex` value in the final result `dict`, before it is returned. This was deliberately kept narrow (two specific, evidence-tested patterns) rather than a general "regex normalizer", since parsing regex with more regex is itself notoriously fragile; each correction was verified with `re.sub` against the actual failing test cases before being adopted, and neither rule fires on patterns that don't match its exact shape.
 
 ## 📊 Performance Analysis
 
-- ⏱️ **Speed**: on the default model (Qwen3-0.6B), all 11 provided test prompts complete in well under 5 minutes (typically ~4 minutes on the reference hardware used during development), satisfying the subject's requirement.
+- ⏱️ **Speed**: on the default model (Qwen3-0.6B), all 11 provided test prompts complete in well under 5 minutes (typically ~4 minutes 10 seconds on the reference hardware used during development), satisfying the subject's requirement.
 - 🔒 **Reliability**: output JSON is 100% valid and schema-compliant across every run — this is a structural guarantee of the FSM, not a statistical outcome, since invalid tokens are mathematically excluded (`-inf` logits) rather than merely discouraged.
-- 🎯 **Accuracy**: with the default model, 8 of 11 test prompts are semantically perfect end-to-end (correct function, correct argument values). All 3 remaining cases select the correct function and correctly extract the non-regex arguments; the weakness is confined to the `regex` parameter of `fn_substitute_string_with_regex`, where the model sometimes produces an overly literal or malformed pattern rather than a general one. Testing with a larger model in the same family (`Qwen2.5-1.5B`) raised this to 10/11 correct, at the cost of pushing total runtime to roughly 8 minutes — over the 5-minute budget — confirming that this is a genuine model-capability limitation (see Challenges) rather than a decoding bug: correctness on the harder cases scales with model size, at a real time cost.
+- 🎯 **Accuracy**: with the default model, **10 of 11 test prompts (90.9%)** are semantically correct end-to-end (correct function, correct argument values), meeting the subject's 90%+ requirement. This was achieved by combining the repetition guard (below) with a small, targeted post-generation correction step (`fix_regex_pattern`) that fixes two specific malformed-regex shapes the model tends to produce (see Algorithm Explanation and Challenges Faced). The one remaining imperfect case is a `regex` argument that is structurally valid JSON but functionally too literal (matches the specific input rather than the general pattern) — a genuine model-capability limitation rather than a decoding bug. Earlier development used a larger model (`Qwen2.5-1.5B`) to reach the same 10/11 accuracy, but that pushed runtime to roughly 8 minutes, over budget; the post-generation correction approach reaches the same accuracy on the *default* model at no extra time cost, since it operates on the already-generated Python dict rather than adding tokens to the generation loop.
 
 ## 🐛 Challenges Faced
 
 - **Tensor shapes from `encode()`**: `Small_LLM_Model.encode()` returns a 2D tensor (`[[token_ids]]`); every pre-computed token sequence needed an extra `.tolist()[0]` unwrap that was easy to forget and caused silent structural bugs (e.g. `numpy` trying to index with a list containing a nested list).
 - **A redundant forward pass per fixed state**: originally, `get_logits_from_input_ids` was called once per loop iteration unconditionally, even in states that immediately `continue` without using the logits at all. Since a fixed-structure JSON call touches roughly 8 fixed-state iterations before it ever needs the model, this wasted the single most expensive operation in the whole program repeatedly. Moving the call inside only the three model-driven states cut total runtime by over 25%.
 - **Greedy decoding loops**: on `PARAM_VALUE_STRING`, the model would sometimes get stuck re-emitting the same short token sequence indefinitely (e.g. repeating a regex group `([aeiou])|` six times in a row), because greedy decoding always has the just-generated tokens fresh in context and highly probable to repeat. A single fixed-window repetition check (`K=3`) only caught periods that were multiples of 3; the fix was to check several window sizes per token instead of one.
-- **Prompt engineering made things worse, not better**: an attempt to fix the regex-quality issue by adding a worked example to the system instructions backfired — the extra regex-like symbols in the example gave the model *more* material to imitate/repeat, and also slowed every single forward pass (the instructions are re-processed as part of the context on every generation step), pushing total runtime over the 5-minute limit. This was reverted in favor of the code-level repetition guard.
+- **Prompt engineering made things worse, not better**: an attempt to fix the regex-quality issue by adding a worked example to the system instructions backfired — the extra regex-like symbols in the example gave the model *more* material to imitate/repeat, and also slowed every single forward pass (the instructions are re-processed as part of the context on every generation step), pushing total runtime over the 5-minute limit. This was reverted; the regex-quality problem was ultimately solved at a different layer entirely — a small, targeted post-generation correction (`fix_regex_pattern`) applied to the already-parsed result, which fixed 2 of the 3 observed failure cases with zero effect on generation speed and pushed overall accuracy from 8/11 to 10/11 (90.9%) on the default model.
+- **`mypy` and a dict with mixed value types**: `result: dict = {}` (no type annotation) was inferred by `mypy` as `dict[str, str]` from its first assignment (`result["prompt"] = prompt`), causing false "invalid index" errors once `result["parameters"]` (itself a `dict`) was accessed. Explicitly annotating `result: dict[str, Any]` resolved it.
+- **Crash-safety on missing/malformed inputs**: the moulinette evaluation checklist explicitly tests missing and malformed input files. An unguarded `compatible_function[0]` access would raise an `IndexError` if `functions_definition.json` was missing or empty (since `function_name_tokens` would then also be empty) — `load_json` already returned `[]` gracefully for a missing/malformed file, but nothing downstream checked for that empty case before proceeding. `main()` now checks both `function_definition` and `test_prompts` immediately after loading them and exits with a clear message (`sys.exit(1)`) before any model is loaded, rather than failing deep inside the generation loop after several minutes of setup.
 - **Cross-model tokenizer differences**: the multi-model bonus initially failed on `TinyLlama-1.1B-Chat`, because its vocabulary file is not a simple UTF-8 JSON like Qwen's BPE vocabulary. Rather than special-casing tokenizer formats, the project scope was kept to models sharing Qwen's BPE-with-JSON-vocab tokenizer family, which is compatible with the code unmodified.
 - **`flake8`/`mypy` on third-party code**: linting the repository as a whole initially failed inside the provided `llm_sdk` package (not code I own or should modify) and even crashed `pyflakes` outright. `llm_sdk` is excluded from `flake8` via a dedicated `.flake8` config, and from `mypy` error-reporting (while still being resolvable for type-checking imports elsewhere) via a `[[tool.mypy.overrides]]` block with `ignore_errors = true` in `pyproject.toml`.
 
@@ -179,7 +193,14 @@ For each run, the output JSON was checked at two levels:
 
 Runtime was measured end-to-end via the terminal timing of `make run` to confirm compliance with the 5-minute requirement.
 
+Robustness was verified against the specific failure modes the moulinette evaluation checklist calls out: a missing or empty `functions_definition.json`, a missing or empty `function_calling_tests.json`, and malformed JSON in either file (confirmed to be caught by `load_json`'s `except (FileNotFoundError, json.JSONDecodeError)` and then reported with a clear message and a clean exit, rather than an unhandled traceback). A prompt with no clear matching function was also tested; since the FSM's `valid_tokens` in `FUNCTION_NAME` never include an "abstain" option, the model is structurally forced to pick some function, so this case does not crash — it can produce a semantically wrong pick, which is a model-capability limit rather than a stability bug.
+
 The multi-model bonus was validated by re-running the same 11 prompts against `Qwen/Qwen2.5-0.5B` and `Qwen/Qwen2.5-1.5B` without any code changes, confirming both that the FSM/tokenizer logic generalizes across models and that model size trades off accuracy against runtime.
+
+## 🎁 Bonus Features
+
+- **Support for multiple LLM models beyond Qwen/Qwen3-0.6B**: the model is selectable via `--model` (or `make run MODEL=...`), and every token the code needs — fixed JSON fragments, function/parameter names, the valid-number and valid-string token sets — is computed fresh from the chosen model's own tokenizer and vocabulary file in `model_post_init`, with no hardcoded token IDs anywhere. Verified working, unmodified, against `Qwen/Qwen2.5-0.5B` and `Qwen/Qwen2.5-1.5B` (see Testing Strategy).
+- **Visualization of the generation process**: running the program prints a colored, live trace of the constrained-decoding FSM as it runs — a bordered header per prompt, the selected function name, each parameter being generated, every individual token the model picks with its state and decoded text, and the final result pretty-printed in green — making the effect of the logit masking visible step by step rather than only showing the final output.
 
 ## 💡 Example Usage
 
