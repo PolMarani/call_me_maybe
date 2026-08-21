@@ -28,8 +28,11 @@ def main() -> None:
     if not test_prompts:
         print("ERROOOOOOOOOORRR on test prompt file")
         sys.exit(1)
-
-    model = Small_LLM_Model(model_name=args.model)
+    try:
+        model = Small_LLM_Model(model_name=args.model)
+    except Exception as e:
+        print(f"ERROOOOOOOOOORRR loading model '{args.model}': {e}")
+        sys.exit(1)
     constrained_decoder = ConstrainedDecoder(model=model,
                                              functions=function_definition)
 
