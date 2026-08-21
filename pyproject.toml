@@ -1,7 +1,7 @@
 [project]
 name = "call_me_maybe"
 version = "0.1.0"
-description = "Add your description here"
+description = "Function calling for small LLMs via constrained decoding"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
