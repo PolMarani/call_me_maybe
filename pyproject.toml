@@ -8,6 +8,7 @@ dependencies = [
     "accelerate>=1.14.0",
     "llm-sdk",
     "pydantic>=2.13.4",
+    "numpy>=2.0.0",
 ]
 
 [tool.uv.workspace]
