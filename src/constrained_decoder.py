@@ -64,6 +64,26 @@ class ConstrainedDecoder(BaseModel):
     close_brace_token: int = 0
 
     def model_post_init(self, __context: Any) -> None:
+        """Pre-compute all fixed tokens and vocabulary-derived data.
+
+        Runs once, right after the Pydantic model is initialized.
+        Pre-tokenizes every fixed JSON fragment, every function name,
+        and every parameter name, and builds the sets of token IDs
+        that are valid inside a JSON string or number, by reading the
+        model's own vocabulary file. Doing this once here (instead of
+        on every call to `generate_function_call`) keeps per-prompt
+        generation fast.
+
+        Parameters
+        ----------
+        __context : Any
+            Pydantic's post-init context object. Unused, but required
+            by the `model_post_init` signature.
+
+        Returns
+        -------
+        None
+        """
         self.prefix_structure = {
             "START": self.model.encode('{').tolist()[0],
             "NAME_KEY": self.model.encode('"name": "').tolist()[0],
