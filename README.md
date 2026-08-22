@@ -10,21 +10,21 @@
 
 ## 📑 Table of Contents
 
-- [📖 Description](#description)
-- [🚀 Instructions](#instructions)
-  - [📋 Requirements](#requirements)
-  - [⚙️ Installation](#installation)
-  - [▶️ Running](#running)
-  - [🛠️ Other Makefile Targets](#other-makefile-targets)
-- [📚 Resources](#resources)
-  - [🤖 How AI Was Used](#how-ai-was-used)
-- [🧠 Algorithm Explanation](#algorithm-explanation)
-- [🏗️ Design Decisions](#design-decisions)
-- [📊 Performance Analysis](#performance-analysis)
-- [🐛 Challenges Faced](#challenges-faced)
-- [✅ Testing Strategy](#testing-strategy)
-- [🎁 Bonus Features](#bonus-features)
-- [💡 Example Usage](#example-usage)
+- [📖 Description](#-description)
+- [🚀 Instructions](#-instructions)
+  - [📋 Requirements](#-requirements)
+  - [⚙️ Installation](#-installation)
+  - [▶️ Running](#-running)
+  - [🛠️ Other Makefile Targets](#-other-makefile-targets)
+- [📚 Resources](#-resources)
+  - [🤖 How AI Was Used](#-how-ai-was-used)
+- [🧠 Algorithm Explanation](#-algorithm-explanation)
+- [🏗️ Design Decisions](#-design-decisions)
+- [📊 Performance Analysis](#-performance-analysis)
+- [🐛 Challenges Faced](#-challenges-faced)
+- [✅ Testing Strategy](#-testing-strategy)
+- [🎁 Bonus Features](#-bonus-features)
+- [💡 Example Usage](#-example-usage)
 
 ## 📖 Description
 
@@ -176,7 +176,7 @@ Both corrections were verified against the actual failure cases produced by the 
 - **Tensor shapes from `encode()`**: `Small_LLM_Model.encode()` returns a 2D tensor (`[[token_ids]]`); every pre-computed token sequence needed an extra `.tolist()[0]` unwrap that was easy to forget and caused silent structural bugs (e.g. `numpy` trying to index with a list containing a nested list).
 - **A redundant forward pass per fixed state**: originally, `get_logits_from_input_ids` was called once per loop iteration unconditionally, even in states that immediately `continue` without using the logits at all. Since a fixed-structure JSON call touches roughly 8 fixed-state iterations before it ever needs the model, this wasted the single most expensive operation in the whole program repeatedly. Moving the call inside only the three model-driven states cut total runtime by over 25%.
 - **Greedy decoding loops**: on `PARAM_VALUE_STRING`, the model would sometimes get stuck re-emitting the same short token sequence indefinitely (e.g. repeating a regex group `([aeiou])|` six times in a row), because greedy decoding always has the just-generated tokens fresh in context and highly probable to repeat. A single fixed-window repetition check (`K=3`) only caught periods that were multiples of 3; the fix was to check several window sizes per token instead of one.
-- **Prompt engineering made things worse, not better**: an attempt to fix the regex-quality issue by adding a worked example to the system instructions backfired — the extra regex-like symbols in the example gave the model *more* material to imitate/repeat, and also slowed every single forward pass (the instructions are re-processed as part of the context on every generation step), pushing total runtime over the 5-minute limit. This was reverted; the regex-quality problem was ultimately solved at a different layer entirely — a small, targeted post-generation correction (`fix_regex_pattern`) applied to the already-parsed result, which fixed 2 of the 3 observed failure cases with zero effect on generation speed and pushed overall accuracy from 8/11 to 10/11 (90.9%) on the default model.
+- **Prompt engineering made things worse, not better**: an attempt to fix the regex-quality issue by adding a worked example to the system instructions backfired — the extra regex-like symbols in the example gave the model *more* material to imitate/repeat, and also slowed every single forward pass (the instructions are re-processed as part of the context on every generation step), pushing total runtime over the 5-minute limit. This was reverted; the regex-quality problem was ultimately solved at a different layer entirely — a small, targeted post-generation correction (`fix_regex_pattern` and `fix_repeated_replacement`) applied to the already-parsed result, which fixed 2 of the 3 observed failure cases with zero effect on generation speed and pushed overall accuracy from 8/11 to 10/11 (90.9%) on the default model.
 - **`mypy` and a dict with mixed value types**: `result: dict = {}` (no type annotation) was inferred by `mypy` as `dict[str, str]` from its first assignment (`result["prompt"] = prompt`), causing false "invalid index" errors once `result["parameters"]` (itself a `dict`) was accessed. Explicitly annotating `result: dict[str, Any]` resolved it.
 - **Crash-safety on missing/malformed inputs**: the moulinette evaluation checklist explicitly tests missing and malformed input files. An unguarded `compatible_function[0]` access would raise an `IndexError` if `functions_definition.json` was missing or empty (since `function_name_tokens` would then also be empty) — `load_json` already returned `[]` gracefully for a missing/malformed file, but nothing downstream checked for that empty case before proceeding. `main()` now checks both `function_definition` and `test_prompts` immediately after loading them and exits with a clear message (`sys.exit(1)`) before any model is loaded, rather than failing deep inside the generation loop after several minutes of setup.
 - **Cross-model tokenizer differences**: the multi-model bonus initially failed on `TinyLlama-1.1B-Chat`, because its vocabulary file is not a simple UTF-8 JSON like Qwen's BPE vocabulary. Rather than special-casing tokenizer formats, the project scope was kept to models sharing Qwen's BPE-with-JSON-vocab tokenizer family, which is compatible with the code unmodified.
@@ -199,7 +199,21 @@ The multi-model bonus was validated by re-running the same 11 prompts against `Q
 
 ## 🎁 Bonus Features
 
-- **Support for multiple LLM models beyond Qwen/Qwen3-0.6B**: the model is selectable via `--model` (or `make run MODEL=...`), and every token the code needs — fixed JSON fragments, function/parameter names, the valid-number and valid-string token sets — is computed fresh from the chosen model's own tokenizer and vocabulary file in `model_post_init`, with no hardcoded token IDs anywhere. Verified working, unmodified, against `Qwen/Qwen2.5-0.5B` and `Qwen/Qwen2.5-1.5B` (see Testing Strategy).
+- **Support for multiple LLM models beyond Qwen/Qwen3-0.6B**: the model is selectable via `--model` (or `make run MODEL=...`), and every token the code needs — fixed JSON fragments, function/parameter names, the valid-number and valid-string token sets — is computed fresh from the chosen model's own tokenizer and vocabulary file in `model_post_init`, with no hardcoded token IDs anywhere.
+
+  Models tried during development:
+
+  | Model | Status | Notes |
+  |---|---|---|
+  | `Qwen/Qwen3-0.6B` (default) | ✅ Works | 10/11 accuracy (90.9%), ~4m10s total runtime — meets both the 90%+ accuracy and <5 minute requirements at once |
+  | `Qwen/Qwen2.5-0.5B` | ✅ Works | Same BPE/JSON-vocab tokenizer family as the default; runs unmodified |
+  | `Qwen/Qwen2.5-1.5B` | ✅ Works | Also reaches 10/11 accuracy, but total runtime rises to ~8 minutes — more capable on the harder regex cases, at a real time cost that exceeds the subject's budget |
+  | `TinyLlama/TinyLlama-1.1B-Chat-v1.0` | ❌ Not compatible | Uses a SentencePiece vocabulary file that isn't plain UTF-8 JSON, which breaks the number/string token filtering in `model_post_init` (see Challenges Faced) |
+
+  Example:
+  ```bash
+  make run MODEL=Qwen/Qwen2.5-1.5B
+  ```
 - **Visualization of the generation process**: running the program prints a colored, live trace of the constrained-decoding FSM as it runs — a bordered header per prompt, the selected function name, each parameter being generated, every individual token the model picks with its state and decoded text, and the final result pretty-printed in green — making the effect of the logit masking visible step by step rather than only showing the final output.
 
 ## 💡 Example Usage
