@@ -114,7 +114,7 @@ Claude (Anthropic) was used throughout this project as a Socratic tutoring "navi
 - Debug logic errors (e.g. tensor shapes from `encode()`, Pydantic attribute declarations, off-by-one errors in prefix matching)
 - Diagnose and fix a performance bug (the model was being queried for logits even in fixed states that never used them)
 - Diagnose and fix a correctness bug (greedy decoding causing the model to loop on repeated regex-like patterns)
-- Design (through testing against the actual failing outputs) the two targeted `fix_regex_pattern` corrections, which I then implemented myself
+- Design (through testing against the actual failing outputs) the two targeted `fix_regex_pattern` and `fix_repeated_replacement` corrections, which I then implemented myself
 - Configure `flake8`/`mypy` to exclude the third-party `llm_sdk` package without hiding it from type resolution
 
 By explicit prior agreement, three parts of the project were excluded from that "navigator only" rule and were written directly by Claude: this **README**, the **NumPy-style docstrings** on the classes and functions, and the **colored terminal visualization** of the generation process (the ANSI color scheme and print formatting in `generate_function_call`).
